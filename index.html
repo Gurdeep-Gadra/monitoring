@@ -358,10 +358,10 @@
                     <div class="param-field-box"><span class="param-label">Te</span><div id="val_te" class="param-value-input">--</div></div>
                 </div>
                 <div class="telemetry-row-grid" style="border-top: 1px dashed #808080; padding-top: 6px;">
-                    <div class="param-field-box"><span class="param-label">Rated Mode</span><div id="val_ratedmode" class="param-value-input fault-active">--</div></div>
+                    <div class="param-field-box"><span class="param-label">Rated Mode</span><div id="val_ratedmode" class="param-value-input">--</div></div>
                     <div class="param-field-box"><span class="param-label">Fan Level</span><div id="val_fanlevel" class="param-value-input">--</div></div>
                     <div class="param-field-box"><span class="param-label">Fan rpm</span><div id="val_idufan" class="param-value-input">--</div></div>
-                    <div class="param-field-box"><span class="param-label" style="min-width:100px;">IDU fault fan fault</span><div id="val_idufaultstr" class="param-value-input fault-active">--</div></div>
+                    <div class="param-field-box"><span class="param-label" style="min-width:100px;">IDU fault</span><div id="val_idufaultstr" class="param-value-input fault-active">--</div></div>
                 </div>
             </div>
             <!-- 5. OUTDOOR OPERATIONAL PARAMETERS PANEL -->
@@ -435,10 +435,14 @@
             <!-- BITWISE INDICATOR CONTROL GROUP -->
             <div class="group-box-frame" style="flex: 1; padding-bottom: 8px; margin-bottom: 0;">
                 <div class="sidebar-indicator-layout">
-                    <div class="checkbox-row-item"><div id="chk_fault" class="indicator-square-box"></div><span>Fault</span></div>
-                    <div class="checkbox-row-item"><div id="chk_protect" class="indicator-square-box"></div><span style="color: #FF0000; font-weight: bold;">Protect</span></div>
-                    <div class="checkbox-row-item"><div id="chk_limitfreq" class="indicator-square-box"></div><span>LimitFreq</span></div>
-                    <div class="checkbox-row-item"><div id="chk_downfreq" class="indicator-square-box"></div><span>DowmFreq</span></div>
+                    <div class="checkbox-row-item"><div id="chk_fault" class="indicator-square-box"></div><span>Fault</span>
+                    <span id="txt_fault_type" style="color: #FF0000; font-weight: bold; font-family: 'Tahoma', sans-serif;"></span></div>
+                    <div class="checkbox-row-item"><div id="chk_protect" class="indicator-square-box"></div><span>Protect</span>
+                    <span id="txt_protect_type" style="color: #FF0000; font-weight: bold; font-family: 'Tahoma', sans-serif;"></span></div>
+                    <div class="checkbox-row-item"><div id="chk_limitfreq" class="indicator-square-box"></div><span>LimitFreq</span>
+                    <span id="txt_Limitfreq_type" style="color: #FF0000; font-weight: bold; font-family: 'Tahoma', sans-serif;"></span></div>
+                    <div class="checkbox-row-item"><div id="chk_downfreq" class="indicator-square-box"></div><span>DownFreq</span>
+                    <span id="txt_downfreq_type" style="color: #FF0000; font-weight: bold; font-family: 'Tahoma', sans-serif;"></span></div> 
                     
                     <div style="border-top: 1px dashed #808080; margin: 4px 0;"></div>
                     
@@ -506,6 +510,7 @@ let MQTT_PASS = getStoredConfig('MEGMEET_PASS', "Amber@123");
 let activeStreamTopic = null; // Topic dedicated to the main live dashboard layout view
 let mainDashboardWs = null; // WebSocket handle for the opened focus diagnostic window
 let mainDashboardPingTimer = null; // Discovery layer sockets register mapping key-value sets
+let lastRecordedEventCodeValue = null;
 let backgroundDiscoverySockets = {};
 let activeDevicesHeartbeats = {}; // Tracks timestamp of the last verified frame packet per topic array
 
@@ -689,8 +694,8 @@ function initializeParallelDiscoveryNetwork() {
                 sendMqttSubscribePacketRaw(tempWs, topicStr);
             }
 
-        //if (packetType === 3) { // TELEMETRY FRAME RECEIVED OVER WIRE 
-        if(payload[payload.length-1]==0xAA){
+        if (packetType === 3) { // TELEMETRY FRAME RECEIVED OVER WIRE 
+        //if(payload[payload.length-1]==0xAA){
         // Tick heartbeat timestamp marker row instantly 
         activeDevicesHeartbeats[topicStr] = Date.now(); 
         
@@ -722,7 +727,7 @@ function initializeParallelDiscoveryNetwork() {
             const topicLen = (payload[idx++] << 8) + payload[idx++]; 
             idx += topicLen; 
             const rawDataBytes = payload.subarray(idx); 
-            if (rawDataBytes.length >= 40) { 
+            if (rawDataBytes.length >= 70 && rawDataBytes[rawDataBytes.length-1]==0xAA) { 
                 parseMegmeetCorePacket(rawDataBytes); 
             } 
         } 
@@ -772,13 +777,16 @@ function initializeParallelDiscoveryNetwork() {
         if (activeStreamTopic === dev.topic) {
             const mText = document.getElementById('status_text');
             const mDot = document.getElementById('status_dot');
+            const pulseBeacon = document.getElementById('rx_pulse_beacon');
             if (mText && mDot) {
                 if (!lastSeen) {
                     mText.innerText = `Selected Stream: Syncing target node context [${dev.topic}]...`;
                     mDot.className = 'status-beacon-dot'; // Neutral state
+                    pulseBeacon.style.backgroundColor = '#FF0000'; // Turn instantly to RED 
                 } else if (!currentDeviceStateOnline) {
                     mText.innerText = `Selected Stream Idle: Realtime connection lost / timeout window tripped [${dev.topic}]`;
                     mDot.className = 'status-beacon-dot'; // Turns off green glowing active state indicator class
+                    pulseBeacon.style.backgroundColor = '#FF0000'; // Turn instantly to RED 
                 } else {
                     mText.innerText = `Selected Stream: Connected and tracking realtime target [${dev.topic}]`;
                     mDot.className = 'status-beacon-dot connected'; // Retains green active beacon status
@@ -872,8 +880,8 @@ function initializeParallelDiscoveryNetwork() {
         if (pulseBeacon) {
             pulseBeacon.style.backgroundColor = '#FF0000'; // Turn instantly to RED on byte arrival
             setTimeout(() => {
-                pulseBeacon.style.backgroundColor = '#00FF00'; // Flash back to GREEN resting state after 80ms
-            }, 80);
+                pulseBeacon.style.backgroundColor = '#00FF00'; // Flash back to GREEN resting state after 120ms
+            }, 120);
         }
         // --- Core Parameter Extraction (Matches 0-Based Payload Specs) ---
         const tr   = (rawDataBytes[9]/2)-30;  // Byte No. 9 
@@ -921,7 +929,6 @@ function initializeParallelDiscoveryNetwork() {
 
         const modeArray     = ["Standby", "Cool", "Heat", "FAN", "Dry"];
         const modeStr       = modeArray[modeCode] || `Mode ${modeCode}`;
-
         const eventTextArray = [
             "System Idle ",
             "Receive indoor instructions Standby",
@@ -936,51 +943,68 @@ function initializeParallelDiscoveryNetwork() {
         const eventDisplayStr = eventTextArray[eventCode] || `Event Logic Code ${eventCode}`;
 
         // Print string message down into the local log layout if state changes
-        if (eventCode > 0 && eventCode < eventTextArray.length) {
+        if (eventCode!==lastRecordedEventCodeValue && eventCode > 0 && eventCode < eventTextArray.length) {
             appendEventLog(eventDisplayStr);
+            lastRecordedEventCodeValue=eventCode;
         }
 
         // --- 4. DATA RENDER PIPELINE TO DASHBOARD FORMS ---
-        document.getElementById('val_softver').innerText   = `${rawDataBytes[2] || 1}.${rawDataBytes[3] || 0}.0`;
-        document.getElementById('val_softdata').innerText  = `20${rawDataBytes[4] || 25}-${rawDataBytes[5] || 9}-${rawDataBytes[6] || 3}`;
-        document.getElementById('val_driverlib').innerText = "Lib RX_V4";
-        document.getElementById('val_idumcuee').innerText  = "EE_OK";
-        document.getElementById('val_odumcuee').innerText  = "EE_OK";
+        document.getElementById('val_softver').innerText   = `${rawDataBytes[28]}.${rawDataBytes[29]}.0`;
+        document.getElementById('val_softdata').innerText  = `20${rawDataBytes[33]}-${rawDataBytes[34]}-${rawDataBytes[35]}`;
+        document.getElementById('val_driverlib').innerText = "- - - -"//"Lib RX_V4";
+        document.getElementById('val_idumcuee').innerText  = "- - - -"//"EE_OK";
+        document.getElementById('val_odumcuee').innerText  = "- - - -"//"EE_OK";
 
         document.getElementById('val_mode').innerText        = `-${modeStr}`;
-        document.getElementById('val_tr').innerText          = (tr * 0.5 || 25.5) + " °C";
-        document.getElementById('val_ts').innerText          = (ts || 24) + " °C";
-        document.getElementById('val_te').innerText          = (te || 26) + " °C";
-        document.getElementById('val_ratedmode').innerText   = modeCode === 0 ? "None" : modeStr;
+        document.getElementById('val_tr').innerText          = tr + "°C";//(tr * 0.5) + " °C";
+        document.getElementById('val_ts').innerText          = ts + "°C";
+        document.getElementById('val_te').innerText          = te + "°C";
+        document.getElementById('val_ratedmode').innerText   = "- - - -";//modeCode === 0 ? "None" : modeStr;
         document.getElementById('val_fanlevel').innerText    = `-${fanLevelStr}`;
-        document.getElementById('val_idufan').innerText      = (iduFan || 0) + " rpm";
-        document.getElementById('val_idufaultstr').innerText = "IDU fault fan fault";
-
-        document.getElementById('val_tsu').innerText     = (tsu || 26) + " °C";
-        document.getElementById('val_ta').innerText      = (ta * 0.5 || 26.5) + " °C";
-        document.getElementById('val_tc').innerText      = (tc || 26) + " °C";
-        document.getElementById('val_td').innerText      = (td || 26) + " °C";
+        document.getElementById('val_idufan').innerText      = iduFan + "RPM";
+        if(rawDataBytes[45] & 0x01) //IDU fault
+            document.getElementById('val_idufaultstr').innerText = "Fan fault";
+        else if(rawDataBytes[45] & 0x02)
+            document.getElementById('val_idufaultstr').innerText = "Te fault";
+        else if(rawDataBytes[45] & 0x04)
+            document.getElementById('val_idufaultstr').innerText = "Tr fault";
+        else if(rawDataBytes[45] & 0x08)
+            document.getElementById('val_idufaultstr').innerText = "NoFo fault";
+        else if(rawDataBytes[45] & 0x10)
+            document.getElementById('val_idufaultstr').innerText = "WiFi fault";
+        else if(rawDataBytes[45])
+            document.getElementById('val_idufaultstr').innerText = "IDU fault";
+        document.getElementById('val_tsu').innerText     = tsu + "°C";
+        document.getElementById('val_ta').innerText      = ta  + "°C";
+        document.getElementById('val_tc').innerText      = tc + "°C";
+        document.getElementById('val_td').innerText      = td + "°C";
         document.getElementById('val_area').innerText    = area === 23 ? "F_area" : `Area ${area}`;
         document.getElementById('val_pcbtype').innerText = pcbType === 0 ? "Rx23Tx" : `Type ${pcbType}`;
-        document.getElementById('val_odufan').innerText  = oduFan || 0;
-        document.getElementById('val_drvfault').innerText = "NormalState";
-
-        document.getElementById('val_dccur').innerText   = (dcCur || 0) + "A";
+        document.getElementById('val_odufan').innerText  = oduFan + "RPM";
+        if(rawDataBytes[16] & 0x02)     //Drv Fault
+            document.getElementById('val_drvfault').innerText = "Over Current";
+        else if(rawDataBytes[16] & 0x04)     //Drv Fault
+            document.getElementById('val_drvfault').innerText = "Over Voltage";
+        else if(rawDataBytes[16] & 0x08)     //Drv Fault
+            document.getElementById('val_drvfault').innerText = "Step Out";
+        else if(rawDataBytes[16] & 0x10)     //Drv Fault
+            document.getElementById('val_drvfault').innerText = "Reverse";
+        document.getElementById('val_dccur').innerText   = dcCur + "A";
         document.getElementById('val_dcvol').innerText   = dcVol + "V";
-        document.getElementById('val_accur').innerText   = (acCur || 0) + "A";
+        document.getElementById('val_accur').innerText   = acCur + "A";
         document.getElementById('val_acvol').innerText   = acVol  + "V";
 
-        document.getElementById('val_eev').innerText     = (eev * 10 || 230) + "P";
-        document.getElementById('val_tipm').innerText    = (tipm || 38) + " °C";
-        document.getElementById('val_fanipm').innerText  = (fanIpm || 0) + " °C";
-        if(rawDataBytes[41]==0)
+        document.getElementById('val_eev').innerText     = eev+ "P";
+        document.getElementById('val_tipm').innerText    = tipm + " °C";
+        document.getElementById('val_fanipm').innerText  = fanIpm+ " °C";
+        if(rawDataBytes[41]==0) //Compressor ON or OFF
             document.getElementById('Comp_Time').innerText   = `Off[${CompTime}]Sec`;
         else if(rawDataBytes[41]==1)
             document.getElementById('Comp_Time').innerText   = `On[${CompTime}]Sec`;
         // Sidebar Mini Indicators
-        document.getElementById('ui_target_freq').innerText = `F${targetFreqHz || 3}`;
-        document.getElementById('ui_set_freq').innerText    = `F${setFreqHz || 0}`;
-        document.getElementById('ui_real_freq').innerText   = realFreqHz === 0 ? "0rpm / (0Hz)" : `${realFreqHz}Hz`;
+        document.getElementById('ui_target_freq').innerText = `F${targetFreqHz}`;
+        document.getElementById('ui_set_freq').innerText    = `F${setFreqHz}`;
+        document.getElementById('ui_real_freq').innerText   = `${realFreqHz*60}rpm/(${realFreqHz}Hz)`;
 
         // Update 13-Column Alignment Cells
         document.getElementById('f_f1').innerText  = f1; document.getElementById('f_f2').innerText  = f2;
@@ -992,10 +1016,63 @@ function initializeParallelDiscoveryNetwork() {
         document.getElementById('f_f13').innerText = f13;
 
         // --- 5. PROCESS SIDE INDICATOR CHECKBOX MASKS ---
-        toggleStatusIndicator('chk_fault',      (rawDataBytes[39] & 0x01), 'active-green');
-        toggleStatusIndicator('chk_protect',    (rawDataBytes[40] & 0x01), 'active-red');
-        toggleStatusIndicator('chk_limitfreq',  (rawDataBytes[7]  & 0x01), 'active-green');
-        toggleStatusIndicator('chk_downfreq',   (rawDataBytes[27] & 0x01), 'active-green');
+        toggleStatusIndicator('chk_fault',      rawDataBytes[39], 'active-green');   //txt_fault_type  
+         if(rawDataBytes[39] & 0x02)     //Drv Fault
+            document.getElementById('txt_fault_type').innerText  = "Communication to drive";
+        else if(rawDataBytes[39] & 0x04)     //Drv Fault
+            document.getElementById('txt_fault_type').innerText  = "TSU Sensor";
+        else if(rawDataBytes[39] & 0x08)     //Drv Fault
+            document.getElementById('txt_fault_type').innerText  = "NoFo";
+        
+        const protectByte1 = rawDataBytes[40]; // Protection 1                      //protection
+        const protectByte2 = rawDataBytes[6]; // Protection 2 to stop protection
+        const activeProtections = [];
+        if (protectByte1 & 0x01) activeProtections.push("DC Volt Stop");
+        if (protectByte1 & 0x02) activeProtections.push("DC Current Protection to Stop");
+        if (protectByte1 & 0x04) activeProtections.push("Tc freeze protect");
+        if (protectByte1 & 0x08) activeProtections.push("Te overload protect");
+        if (protectByte1 & 0x10) activeProtections.push("IPM over temp protect");
+        if (protectByte1 & 0x20) activeProtections.push("IPM protect permanent");
+        if (protectByte1 & 0x40) activeProtections.push("Start Fail Preheat");        
+        if (protectByte2 & 0x01) activeProtections.push("Tr Protect");
+        if (protectByte2 & 0x02) activeProtections.push("Tc Protect");
+        if (protectByte2 & 0x04) activeProtections.push("Te protect");
+        if (protectByte2 & 0x08) activeProtections.push("Ta protect");
+        if (protectByte2 & 0x10) activeProtections.push("AC current");
+        if (protectByte2 & 0x20) activeProtections.push("AC voltage");
+        if (protectByte2 & 0x40) activeProtections.push("Compressor protect(permanent stop)");
+        if (protectByte2 & 0x80) activeProtections.push("Td Protect");        
+        const isAnyProtectionActive = (protectByte1 > 0) || (protectByte2 > 0);
+        toggleStatusIndicator('chk_protect', isAnyProtectionActive, 'active-green');        
+        const protectLabelTextElement = document.getElementById('txt_protect_type');
+        if (protectLabelTextElement) {
+            protectLabelTextElement.innerText = activeProtections.length > 0 ? activeProtections.join(", ") : ""; // Clear completely if no protection bits are tripped
+        }
+        //txt_Limitfreq_type
+        const Limitfreq_protectByte = rawDataBytes[7]; // LimitFreq
+        const Limitfreq_activeProtections = [];      
+        if (Limitfreq_protectByte & 0x01) activeProtections.push("DC Current Limit");
+        if (Limitfreq_protectByte & 0x02) activeProtections.push("IPM Limit");
+        if (Limitfreq_protectByte & 0x04) activeProtections.push("Tc Limit");
+        if (Limitfreq_protectByte & 0x08) activeProtections.push("Te Limit");
+        if (Limitfreq_protectByte & 0x10) activeProtections.push("Ta Limit");
+        if (Limitfreq_protectByte & 0x20) activeProtections.push("AC Voltage Limit");
+        if (Limitfreq_protectByte & 0x40) activeProtections.push("AC Current Limit");
+        if (Limitfreq_protectByte & 0x80) activeProtections.push("Td Limit");        
+        toggleStatusIndicator('chk_limitfreq', Limitfreq_protectByte, 'active-green');        
+        document.getElementById('txt_Limitfreq_type').innerText = Limitfreq_activeProtections.length > 0 ? Limitfreq_activeProtections.join(", ") : ""; // Clear completely if no protection bits are tripped
+
+         //txt_downfreq_type
+        const Downfreq_protectByte = rawDataBytes[27]; // Down Freq
+        const Downfreq_activeProtections = [];      
+        if (Downfreq_protectByte & 0x01) activeProtections.push("Condenser temp"); //Condenser temp down freq/ Limit FX Run
+        if (Downfreq_protectByte & 0x02) activeProtections.push("Evaporator temp");
+        if (Downfreq_protectByte & 0x04) activeProtections.push("Comp dischrg temp");// Compressor discharge temp down freq
+        if (Downfreq_protectByte & 0x08) activeProtections.push("AC current");
+        if (Downfreq_protectByte & 0x10) activeProtections.push("Compressor phase current");
+        if (Downfreq_protectByte & 0x20) activeProtections.push("IPM temperature");    
+        toggleStatusIndicator('chk_downfreq', Downfreq_protectByte, 'active-green');        
+        document.getElementById('txt_downfreq_type').innerText = Downfreq_activeProtections.length > 0 ? Downfreq_activeProtections.join(", ") : ""; // Clear completely if no protection bits are tripped
         
         toggleStatusIndicator('chk_comp',       (rawDataBytes[17] & 0x01), 'active-green');
         toggleStatusIndicator('chk_defrost',    (rawDataBytes[17] & 0x08), 'active-green');
