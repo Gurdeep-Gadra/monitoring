@@ -407,7 +407,7 @@
                 </div>
             </div>
             <div class="freq-strip-container-row" style="margin-top: 1px;">
-                <span class="freq-strip-heading-label">Freq</span>
+                <span class="freq-strip-heading-label">Cool</span>
                 <div class="freq-strip-13-column-grid">
                     <div id="f_f1" class="freq-grid-data-textbox">--</div><div id="f_f2" class="freq-grid-data-textbox">--</div>
                     <div id="f_f3" class="freq-grid-data-textbox">--</div><div id="f_f4" class="freq-grid-data-textbox">--</div>
@@ -416,6 +416,18 @@
                     <div id="f_f9" class="freq-grid-data-textbox">--</div><div id="f_f10" class="freq-grid-data-textbox">--</div>
                     <div id="f_f11" class="freq-grid-data-textbox">--</div><div id="f_f12" class="freq-grid-data-textbox">--</div>
                     <div id="f_f13" class="freq-grid-data-textbox">--</div>
+                </div>
+            </div>
+            <div class="freq-strip-container-row" style="margin-top: 1px;">
+                <span class="freq-strip-heading-label">Heat</span>
+                <div class="freq-strip-13-column-grid">
+                    <div id="Hf_f1" class="freq-grid-data-textbox">--</div><div id="Hf_f2" class="freq-grid-data-textbox">--</div>
+                    <div id="Hf_f3" class="freq-grid-data-textbox">--</div><div id="Hf_f4" class="freq-grid-data-textbox">--</div>
+                    <div id="Hf_f5" class="freq-grid-data-textbox">--</div><div id="Hf_f6" class="freq-grid-data-textbox">--</div>
+                    <div id="Hf_f7" class="freq-grid-data-textbox">--</div><div id="Hf_f8" class="freq-grid-data-textbox">--</div>
+                    <div id="Hf_f9" class="freq-grid-data-textbox">--</div><div id="Hf_f10" class="freq-grid-data-textbox">--</div>
+                    <div id="Hf_f11" class="freq-grid-data-textbox">--</div><div id="Hf_f12" class="freq-grid-data-textbox">--</div>
+                    <div id="Hf_f13" class="freq-grid-data-textbox">--</div>
                 </div>
             </div>
         </div> <!-- End of left-telemetry-column -->
@@ -493,7 +505,7 @@
         </div>
         <div class="terminal-box-frame">
             <div class="terminal-box-header">system_event_tracker.log</div>
-            <pre id="event_log_stream"></pre>
+            <pre id="event_log_stream_terminal"></pre>
         </div>
     </div>
 
@@ -511,6 +523,7 @@ let activeStreamTopic = null; // Topic dedicated to the main live dashboard layo
 let mainDashboardWs = null; // WebSocket handle for the opened focus diagnostic window
 let mainDashboardPingTimer = null; // Discovery layer sockets register mapping key-value sets
 let lastRecordedEventCodeValue = null;
+let lastIndicatorStates = {};
 let backgroundDiscoverySockets = {};
 let activeDevicesHeartbeats = {}; // Tracks timestamp of the last verified frame packet per topic array
 
@@ -569,9 +582,9 @@ setInterval(() => {
         if (stored) return JSON.parse(stored);
         
         const defaultNodes = [
-            { name: "Megmeet_ODU_LAB1", topic: "TTW/LAB1" },
-            { name: "Megmeet_ODU_LAB2", topic: "TTW/LAB2" },
-            { name: "Megmeet_ODU_LAB3", topic: "TTW/LAB3" }
+            { name: "Megmeet_TTW_LAB1", topic: "TTW/LAB1" },
+            { name: "Megmeet_TTW_LAB2", topic: "TTW/LAB2" },
+            { name: "Megmeet_TTW_LAB3", topic: "TTW/LAB3" }
         ];
         localStorage.setItem('MEGMEET_NODES_DB', JSON.stringify(defaultNodes));
         return defaultNodes;
@@ -692,6 +705,16 @@ function initializeParallelDiscoveryNetwork() {
 
             if (packetType === 2) { // CONNACK HANDSHAKE OK
                 sendMqttSubscribePacketRaw(tempWs, topicStr);
+                // BUGFIX: the CONNECT packet declares a 60s Keep Alive, but nothing
+                // was ever sent to honor it. The broker was silently dropping the
+                // connection once that window lapsed -> this is the ~54-57s disconnect.
+                // Sending a PINGREQ well inside that window keeps the session alive.
+                if (tempWs.pingTimer) clearInterval(tempWs.pingTimer);
+                tempWs.pingTimer = setInterval(() => sendMqttPingreqPacketRaw(tempWs), 25000);
+            }
+
+            if (packetType === 13) { // PINGRESP - broker acknowledged our keep-alive ping
+                // No action needed; receiving this just confirms the link is healthy.
             }
 
         if (packetType === 3) { // TELEMETRY FRAME RECEIVED OVER WIRE 
@@ -737,6 +760,11 @@ function initializeParallelDiscoveryNetwork() {
         };
 
         tempWs.onclose = () => {
+            // BUGFIX: stop the keep-alive ping interval tied to this dead socket
+            if (tempWs.pingTimer) {
+                clearInterval(tempWs.pingTimer);
+                tempWs.pingTimer = null;
+            }
             delete backgroundDiscoverySockets[topicStr];
             // Schedule an isolated backdrop reconnect pinger after 5000ms
             setTimeout(() => initializeBackgroundDeviceScanner(topicStr), 5000);
@@ -772,7 +800,7 @@ function initializeParallelDiscoveryNetwork() {
                 }
             }
         }
-
+        //let currentDeviceStateOnline = true;///////////////////////////////
         // CORRECTED: If this device is the focused dashboard screen, bind its live network state to the master status bar
         if (activeStreamTopic === dev.topic) {
             const mText = document.getElementById('status_text');
@@ -825,9 +853,13 @@ function initializeParallelDiscoveryNetwork() {
         // Restore overlay block grid dashboard sheet view
         document.getElementById('device_manager').style.display = 'flex';
         
-        statusBar.classList.remove('connected');
-        statusDot.className = 'status-beacon-dot';
-        statusText.innerText = "Pipeline Idle: Please choose an active node path from your Asset Dashboard...";
+        // BUGFIX: statusBar/statusDot/statusText were referenced as bare globals
+        // that never existed, throwing a ReferenceError and aborting this function
+        // before renderDeviceInventoryTable() ran.
+        const statusDotEl = document.getElementById('status_dot');
+        const statusTextEl = document.getElementById('status_text');
+        if (statusDotEl) statusDotEl.className = 'status-beacon-dot';
+        if (statusTextEl) statusTextEl.innerText = "Pipeline Idle: Please choose an active node path from your Asset Dashboard...";
         
         renderDeviceInventoryTable();
     }
@@ -870,6 +902,16 @@ function initializeParallelDiscoveryNetwork() {
         pkt[idx++] = 0;
         
         if (targetSocketHandle.readyState === 1) targetSocketHandle.send(pkt);
+    }
+
+    // BUGFIX: MQTT PINGREQ transmitter. Fixed 2-byte control packet (type 12,
+    // remaining length 0). Sending this on an interval shorter than the 60s
+    // Keep Alive declared in CONNECT is what keeps HiveMQ Cloud from dropping
+    // the WebSocket every ~55-60 seconds.
+    function sendMqttPingreqPacketRaw(targetSocketHandle) {
+        if (targetSocketHandle.readyState === 1) {
+            targetSocketHandle.send(new Uint8Array([0xC0, 0x00]));
+        }
     }
     // =========================================================================
     // PART 5 - SECTION C: RECESSED 0-offset DATA MATRIX PARSER & DOM CLOSING
@@ -916,6 +958,14 @@ function initializeParallelDiscoveryNetwork() {
         const f11 = rawDataBytes[57];  const f12 = rawDataBytes[58];
         const f13 = rawDataBytes[59];
 
+        const Hf1  = rawDataBytes[60];  const Hf2  = rawDataBytes[61];
+        const Hf3  = rawDataBytes[62];  const Hf4  = rawDataBytes[63];
+        const Hf5  = rawDataBytes[64];  const Hf6  = rawDataBytes[65];
+        const Hf7  = rawDataBytes[66];  const Hf8  = rawDataBytes[67];
+        const Hf9  = rawDataBytes[68];  const Hf10 = rawDataBytes[69];
+        const Hf11 = rawDataBytes[70];  const Hf12 = rawDataBytes[71];
+        const Hf13 = rawDataBytes[72];
+    
         // Configuration Lookup Bytes
         const fanLevelCode  = rawDataBytes[18];
         const modeCode      = rawDataBytes[1];
@@ -1014,6 +1064,14 @@ function initializeParallelDiscoveryNetwork() {
         document.getElementById('f_f9').innerText  = f9; document.getElementById('f_f10').innerText = f10;
         document.getElementById('f_f11').innerText = f11; document.getElementById('f_f12').innerText = f12;
         document.getElementById('f_f13').innerText = f13;
+
+        document.getElementById('Hf_f1').innerText  = Hf1; document.getElementById('Hf_f2').innerText  = Hf2;
+        document.getElementById('Hf_f3').innerText  = Hf3; document.getElementById('Hf_f4').innerText  = Hf4;
+        document.getElementById('Hf_f5').innerText  = Hf5; document.getElementById('Hf_f6').innerText  = Hf6;
+        document.getElementById('Hf_f7').innerText  = Hf7; document.getElementById('Hf_f8').innerText  = Hf8;
+        document.getElementById('Hf_f9').innerText  = Hf9; document.getElementById('Hf_f10').innerText = Hf10;
+        document.getElementById('Hf_f11').innerText = Hf11; document.getElementById('Hf_f12').innerText = Hf12;
+        document.getElementById('Hf_f13').innerText = Hf13;
 
         // --- 5. PROCESS SIDE INDICATOR CHECKBOX MASKS ---
         toggleStatusIndicator('chk_fault',      rawDataBytes[39], 'active-green');   //txt_fault_type  
